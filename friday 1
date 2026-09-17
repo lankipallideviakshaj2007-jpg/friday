@@ -1,0 +1,607 @@
+ read C:/Users/lanki/Desktop/FRIDAY_Assistant/main.py
+
+ import os
+ import sys
+ import math
+ import random
+ import threading
+ import time
+ from datetime import datetime
+ import customtkinter as ctk
+ import tkinter as tk
+
+ # Import modules
+ from voice_manager import VoiceManager
+ from task_manager import TaskManager
+ from email_manager import EmailManager
+ from actions import SystemActions
+
+ ctk.set_appearance_mode("Dark")
+
+ class FridayInterface(ctk.CTk):
+     def __init__(self):
+         super().__init__()
+
+         self.title("F.R.I.D.A.Y. - Holographic Intelligence Dashboard")
+         self.geometry("1100x750")
+         self.minsize(950, 700)
+         self.configure(fg_color="#030712") # Ultra dark near-black background
+
+         # State Variables
+         self.assistant_state = "IDLE" # IDLE, LISTENING, THINKING, SPEAKING, EXECUTING, SUCCESS, ERROR
+         self.last_transcript = ""
+         self.last_response = "Awaiting activation keyword 'Friday'..."
+         self.mute_voice = False
+         self.continuous_listening = True
+
+         # Audio level tracking for sphere reaction
+         self.current_mic_level = 0.0
+
+         # Load Managers
+         self.actions = SystemActions()
+         self.task_manager = TaskManager()
+         self.email_manager = EmailManager()
+
+         # Voice Manager with safety callbacks
+         self.voice = VoiceManager(
+             callback=self.handle_voice_input,
+             status_callback=self.handle_voice_status
+         )
+
+         # Start listening immediately
+         self.voice.start_listening()
+         self.task_manager.start_reminder_loop()
+         self.actions.set_startup(True)
+
+         # Setup layout
+         self.setup_ui()
+
+         # Start animations
+         self.anim_frame = 0
+         self.particles = [{"x": random.randint(50, 450), "y": random.randint(50, 350), "speed": random.uniform(0.5, 1.5), "angle":
+ random.uniform(0, 2*math.pi), "radius": random.randint(1, 3)} for _ in range(30)]
+         self.animate()
+
+         # Say hello on startup securely
+         self.after(1000, lambda: self.speak_and_display("Hello sir. FRIDAY systems are fully operational. How can I assist you today?"))
+
+     def handle_voice_status(self, status, error_msg=None):
+         """Callback from VoiceManager when status changes."""
+         self.assistant_state = status
+         if status == "ERROR" and error_msg:
+             self.show_error(error_msg)
+         elif status == "LISTENING":
+             self.after(0, lambda: self.transcript_lbl.configure(text="Sensing audio..."))
+
+     def handle_voice_input(self, text):
+         """Processes finalized speech from VoiceManager."""
+         self.last_transcript = text
+         self.after(0, lambda: self.transcript_lbl.configure(text=f'"{text}"'))
+
+         # Parse commands
+         threading.Thread(target=self.parse_and_execute, args=(text,), daemon=True).start()
+
+     def speak_and_display(self, response_text):
+         """Speak out loud and display visually."""
+         self.last_response = response_text
+         self.after(0, lambda: self.response_lbl.configure(text=response_text))
+         self.log_history("Siri/FRIDAY", "Speak", response_text, "Success")
+         self.voice.speak(response_text)
+
+     def show_error(self, err_text):
+         self.assistant_state = "ERROR"
+         self.last_response = err_text
+         self.after(0, lambda: self.response_lbl.configure(text=f"Error: {err_text}"))
+         self.log_history("System", "Error", err_text, "Failed")
+         self.voice.speak("Sir, an error has occurred.")
+
+     def setup_ui(self):
+         # Configure Grid Layout (Left: Main Dashboard, Right: Command History/Debug)
+         self.grid_columnconfigure(0, weight=3)
+         self.grid_columnconfigure(1, weight=1)
+         self.grid_rowconfigure(0, weight=1)
+
+         # =====================================================================
+         # LEFT PANEL: Main Hologram Dashboard
+         # =====================================================================
+         self.main_pane = ctk.CTkFrame(self, fg_color="transparent")
+         self.main_pane.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+         self.main_pane.grid_rowconfigure(0, weight=3) # Sphere
+         self.main_pane.grid_rowconfigure(1, weight=1) # Transcript + Response
+         self.main_pane.grid_rowconfigure(2, weight=0) # Buttons
+         self.main_pane.grid_columnconfigure(0, weight=1)
+
+         # Top Section: Futuristic Hologram Sphere Canvas
+         self.sphere_frame = ctk.CTkFrame(self.main_pane, fg_color="#090d16", corner_radius=20, border_color="#1f293d", border_width=1)
+         self.sphere_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 15))
+
+         self.canvas = ctk.CTkCanvas(self.sphere_frame, bg="#090d16", highlightthickness=0)
+         self.canvas.pack(fill="both", expand=True, padx=10, pady=10)
+
+         # Middle Section: Glassmorphism Glass Panels for Transcript and Response
+         self.text_panel = ctk.CTkFrame(self.main_pane, fg_color="#0e1626", corner_radius=15, border_color="#1f293d", border_width=1)
+         self.text_panel.grid(row=1, column=0, sticky="nsew", pady=(0, 15))
+         self.text_panel.grid_columnconfigure(0, weight=1)
+         self.text_panel.grid_rowconfigure(0, weight=1)
+         self.text_panel.grid_rowconfigure(1, weight=1)
+
+         # Live Transcript Label
+         self.transcript_lbl = ctk.CTkLabel(
+             self.text_panel,
+             text="Awaiting activation... Say 'Friday' followed by your command.",
+             font=ctk.CTkFont(family="Consolas", size=14),
+             text_color="#00f0ff", # Neon cyan
+             wraplength=600
+         )
+         self.transcript_lbl.grid(row=0, column=0, sticky="nsew", padx=20, pady=5)
+
+         # Assistant Response Label
+         self.response_lbl = ctk.CTkLabel(
+             self.text_panel,
+             text="Waiting for input...",
+             font=ctk.CTkFont(size=17, weight="bold"),
+             text_color="#e5e7eb",
+             wraplength=650
+         )
+         self.response_lbl.grid(row=1, column=0, sticky="nsew", padx=20, pady=5)
+
+         # Bottom Section: Control Bar (Futuristic glass pills)
+         self.control_bar = ctk.CTkFrame(self.main_pane, fg_color="#0b1329", height=80, corner_radius=20, border_color="#1e293b",
+ border_width=1)
+         self.control_bar.grid(row=2, column=0, sticky="ew")
+         self.control_bar.grid_propagate(False)
+
+         # Grid inside control bar
+         for col in range(6):
+             self.control_bar.grid_columnconfigure(col, weight=1)
+         self.control_bar.grid_rowconfigure(0, weight=1)
+
+         # Mic Toggle Button
+         self.btn_mic = ctk.CTkButton(
+             self.control_bar,
+             text="🎤 Listen On",
+             fg_color="#059669", # Safe Emerald Green
+             hover_color="#047857",
+             font=ctk.CTkFont(weight="bold"),
+             command=self.toggle_listening
+         )
+         self.btn_mic.grid(row=0, column=0, padx=8, pady=12, sticky="nsew")
+
+         # Sound Toggle Button
+         self.btn_sound = ctk.CTkButton(
+             self.control_bar,
+             text="🔊 Voice On",
+             fg_color="#3b82f6", # Blue
+             hover_color="#2563eb",
+             font=ctk.CTkFont(weight="bold"),
+             command=self.toggle_mute
+         )
+         self.btn_sound.grid(row=0, column=1, padx=8, pady=12, sticky="nsew")
+
+         # Check Email Button
+         self.btn_email = ctk.CTkButton(
+             self.control_bar,
+             text="✉️ Check Mail",
+             fg_color="#1e293b",
+             hover_color="#334155",
+             command=lambda: self.parse_and_execute("check my email")
+         )
+         self.btn_email.grid(row=0, column=2, padx=8, pady=12, sticky="nsew")
+
+         # View Tasks Button
+         self.btn_tasks = ctk.CTkButton(
+             self.control_bar,
+             text="📋 View Tasks",
+             fg_color="#1e293b",
+             hover_color="#334155",
+             command=lambda: self.parse_and_execute("read my tasks")
+         )
+         self.btn_tasks.grid(row=0, column=3, padx=8, pady=12, sticky="nsew")
+
+         # Manual Trigger Button
+         self.btn_trigger = ctk.CTkButton(
+             self.control_bar,
+             text="🚀 Run Command",
+             fg_color="#7c3aed", # Violet purple
+             hover_color="#6d28d9",
+             command=self.manual_command_prompt
+         )
+         self.btn_trigger.grid(row=0, column=4, padx=8, pady=12, sticky="nsew")
+
+         # Close App Button
+         self.btn_close = ctk.CTkButton(
+             self.control_bar,
+             text="✕ Exit",
+             fg_color="#dc2626", # Red
+             hover_color="#b91c1c",
+             command=self.destroy
+         )
+         self.btn_close.grid(row=0, column=5, padx=8, pady=12, sticky="nsew")
+
+
+         # =====================================================================
+         # RIGHT PANEL: Compact Debug / History Sidebar
+         # =====================================================================
+         self.right_pane = ctk.CTkFrame(self, fg_color="#090d16", width=280, border_color="#1f293d", border_width=1)
+         self.right_pane.grid(row=0, column=1, sticky="nsew", padx=(0, 20), pady=20)
+         self.right_pane.grid_columnconfigure(0, weight=1)
+         self.right_pane.grid_rowconfigure(1, weight=1)
+
+         # Title
+         self.history_title = ctk.CTkLabel(
+             self.right_pane,
+             text="COMMAND LOGS & METRICS",
+             font=ctk.CTkFont(family="Consolas", size=13, weight="bold"),
+             text_color="#a78bfa"
+         )
+         self.history_title.grid(row=0, column=0, pady=15, padx=10, sticky="ew")
+
+         # History Text box for logs
+         self.history_box = ctk.CTkTextbox(
+             self.right_pane,
+             wrap="word",
+             font=ctk.CTkFont(family="Consolas", size=11),
+             fg_color="#050811",
+             text_color="#38bdf8",
+             border_color="#1e293b",
+             border_width=1
+         )
+         self.history_box.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 15))
+         self.history_box.configure(state="disabled")
+
+     # =====================================================================
+     # ANIMATIONS: Glowing Interactive Sphere & Particles
+     # =====================================================================
+     def animate(self):
+         self.canvas.delete("all")
+         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
+         if w < 10: w, h = 750, 400
+         cx, cy = w/2, h/2
+
+         # Draw a beautiful digital futuristic radar grid behind the sphere
+         grid_color = "#0e1627"
+         self.canvas.create_oval(cx - 190, cy - 190, cx + 190, cy + 190, outline=grid_color, width=1)
+         self.canvas.create_oval(cx - 130, cy - 130, cx + 130, cy + 130, outline=grid_color, width=1)
+         self.canvas.create_line(cx - 210, cy, cx + 210, cy, fill=grid_color, width=1)
+         self.canvas.create_line(cx, cy - 210, cx, cy + 210, fill=grid_color, width=1)
+
+         # Update and Draw floating particles
+         for p in self.particles:
+             p["x"] += p["speed"] * math.cos(p["angle"])
+             p["y"] += p["speed"] * math.sin(p["angle"])
+             # Bounce particles off borders
+             if p["x"] < 20 or p["x"] > w - 20: p["angle"] = math.pi - p["angle"]
+             if p["y"] < 20 or p["y"] > h - 20: p["angle"] = -p["angle"]
+
+             # Glow around sphere
+             dist = math.sqrt((p["x"] - cx)**2 + (p["y"] - cy)**2)
+             alpha_color = "#12253f" if dist > 150 else "#00f0ff"
+             self.canvas.create_oval(p["x"]-p["radius"], p["y"]-p["radius"], p["x"]+p["radius"], p["y"]+p["radius"], fill=alpha_color,
+ outline="")
+
+         # Core Sphere Size & Color state logic
+         radius = 75
+         self.current_mic_level = self.voice.input_level
+
+         if self.assistant_state == "LISTENING":
+             # Reactive cyan sound wave rings that expand with real microphone sound intensity
+             reaction = min(self.current_mic_level / 4.0, 70.0)
+             radius = 80 + reaction
+             color = "#00f0ff" # Neon Cyan
+             glow = "#0284c7"
+
+             # Soundwave outer rings
+             for r_factor in [1.3, 1.6]:
+                 ring_r = radius * r_factor
+                 self.canvas.create_oval(cx-ring_r, cy-ring_r, cx+ring_r, cy+ring_r, outline="#00f0ff", width=1)
+
+         elif self.assistant_state == "THINKING":
+             # Orb of deep purple violet with spinning rings
+             radius = 70 + 5 * math.sin(self.anim_frame * 0.25)
+             color = "#a78bfa" # Lavender violet
+             glow = "#6d28d9"
+
+             # Orbiting white/purple dots
+             for i in range(5):
+                 angle = (self.anim_frame * 0.08) + (i * (2 * math.pi / 5))
+                 ox = cx + (radius + 40) * math.cos(angle)
+                 oy = cy + (radius + 20) * math.sin(angle)
+                 self.canvas.create_oval(ox-4, oy-4, ox+4, oy+4, fill="#ffffff", outline="#a78bfa")
+
+             # Rotating rings
+             self.canvas.create_oval(cx - radius - 25, cy - 10, cx + radius + 25, cy + 10, outline="#a78bfa", width=1)
+
+         elif self.assistant_state == "SPEAKING":
+             # Electric blue responsive pulsating wave
+             radius = 75 + 18 * math.sin(self.anim_frame * 0.3)
+             color = "#2563eb" # Electric Blue
+             glow = "#1d4ed8"
+
+             # Draw wave lines mimicking audio waves
+             for i in range(-5, 6):
+                 wave_h = 35 * math.sin(self.anim_frame * 0.4 + i)
+                 wx = cx + (i * 12)
+                 self.canvas.create_line(wx, cy - wave_h, wx, cy + wave_h, fill="#00f0ff", width=2)
+
+         elif self.assistant_state == "EXECUTING":
+             # Rapid orange/amber breathing pulse
+             radius = 65 + 25 * abs(math.sin(self.anim_frame * 0.6))
+             color = "#f59e0b" # Orange amber
+             glow = "#b45309"
+
+         elif self.assistant_state == "SUCCESS":
+             # Green success ring
+             radius = 85
+             color = "#10b981" # Green emerald
+             glow = "#047857"
+             self.canvas.create_oval(cx - 120, cy - 120, cx + 120, cy + 120, outline="#10b981", width=3)
+
+         elif self.assistant_state == "ERROR":
+             # Angry breathing red/orange
+             radius = 75 + 3 * math.sin(self.anim_frame * 0.1)
+             color = "#ef4444" # Red
+             glow = "#7f1d1d"
+             self.canvas.create_oval(cx-radius - 15, cy-radius - 15, cx+radius + 15, cy+radius + 15, outline="#ef4444", width=1)
+
+         else: # IDLE (Slow breathing blue pulsing glow)
+             radius = 70 + 4 * math.sin(self.anim_frame * 0.06)
+             color = "#0f172a" # Deep dark blue
+             glow = "#1e3a8a"
+
+             # Subtle breathing aura rings
+             self.canvas.create_oval(cx-radius - 10, cy-radius - 10, cx+radius + 10, cy+radius + 10, outline="#1e293b", width=1)
+
+         # Draw actual sphere core
+         self.canvas.create_oval(cx-radius, cy-radius, cx+radius, cy+radius, fill=color, outline="#ffffff", width=2)
+
+         self.anim_frame += 1
+         self.after(30, self.animate)
+
+     # =====================================================================
+     # CONTROLS & VOICE TOGGLES
+     # =====================================================================
+     def toggle_listening(self):
+         self.continuous_listening = not self.continuous_listening
+         if self.continuous_listening:
+             self.voice.start_listening()
+             self.btn_mic.configure(text="🎤 Listen On", fg_color="#059669", hover_color="#047857")
+             self.speak_and_display("Microphone listening loop activated.")
+         else:
+             self.voice.stop_listening()
+             self.btn_mic.configure(text="🎤 Listen Off", fg_color="#4b5563", hover_color="#374151")
+             self.speak_and_display("Microphone muted.")
+
+     def toggle_mute(self):
+         self.mute_voice = not self.mute_voice
+         self.voice.mute_mode = self.mute_voice
+         if self.mute_voice:
+             self.btn_sound.configure(text="🔇 Voice Off", fg_color="#4b5563", hover_color="#374151")
+         else:
+             self.btn_sound.configure(text="🔊 Voice On", fg_color="#3b82f6", hover_color="#2563eb")
+             self.speak_and_display("Sound output enabled.")
+
+     def manual_command_prompt(self):
+         """Allows typing a command manually for full accessibility."""
+         dialog = ctk.CTkInputDialog(text="Enter your command manually, Sir:", title="FRIDAY Interface Console")
+         val = dialog.get_input()
+         if val:
+             self.handle_voice_input(val.strip())
+
+     def log_history(self, speaker, action, details, status):
+         """Clean command history panel logger."""
+         now = datetime.now().strftime("%H:%M:%S")
+         log_entry = f"[{now}] {speaker} -> {action}\nDetail: {details}\nStatus: {status}\n{'-'*35}\n"
+
+         self.history_box.configure(state="normal")
+         self.history_box.insert("0.0", log_entry) # Put latest on top
+         self.history_box.see("0.0")
+         self.history_box.configure(state="disabled")
+
+     # =====================================================================
+     # END-TO-END VOICE PIPELINE & INTENT PARSING
+     # =====================================================================
+     def parse_and_execute(self, cmd_text):
+         """Normalizes text, removes filler words, extracts clean intent & executes."""
+         self.assistant_state = "THINKING"
+         self.after(0, lambda: self.response_lbl.configure(text="Parsing command..."))
+
+         # 1. Normalization & Sanitization
+         raw_cmd = cmd_text.lower().strip()
+
+         # Remove common filler words
+         fillers = ["hey", "please", "can you", "could you", "would you", "now", "friday", "siri", "assistant", "to"]
+         words = raw_cmd.split()
+         clean_words = [w for w in words if w not in fillers]
+         cmd = " ".join(clean_words).strip()
+
+         print(f"[Dashboard] Parsing Normalized Text: '{cmd}'")
+
+         # 2. INTENT MATCHING & EXECUTION
+         self.assistant_state = "EXECUTING"
+
+         # Intent A: App Launching (e.g., "open chrome", "launch notepad", "start calculator")
+         if any(cmd.startswith(x) for x in ["open ", "launch ", "start "]):
+             # Extract target
+             target = cmd.replace("open", "").replace("launch", "").replace("start", "").strip()
+
+             # Map aliases
+             alias_map = {
+                 "google chrome": "chrome",
+                 "google": "chrome",
+                 "internet browser": "chrome",
+                 "text editor": "notepad",
+                 "calc": "calculator",
+                 "spotify music": "spotify"
+             }
+             target = alias_map.get(target, target)
+
+             self.after(0, lambda: self.response_lbl.configure(text=f"Opening {target.capitalize()}..."))
+             success, message = self.actions.open_application(target)
+
+             if success:
+                 self.assistant_state = "SUCCESS"
+                 self.speak_and_display(f"Successfully launched {target}, Sir.")
+                 self.log_history("User", f"Launch {target}", "Secure Native App Bridge", "Success")
+             else:
+                 self.assistant_state = "ERROR"
+                 self.speak_and_display(f"Access Denied: {message}")
+                 self.log_history("User", f"Launch {target}", "Allowlist Blocked / Path Error", "Failed")
+
+         # Intent B: Search Google (e.g., "search for latest news", "google who built the pyramids")
+         elif any(cmd.startswith(x) for x in ["search for ", "google ", "search "]):
+             query = cmd.replace("search for", "").replace("google", "").replace("search", "").strip()
+             self.speak_and_display(f"Searching the web for {query}.")
+             self.actions.search_web(query)
+             self.assistant_state = "SUCCESS"
+             self.log_history("User", "Web Search", f"Query: {query}", "Success")
+
+         # Intent C: Open Safe Websites (e.g., "open youtube", "open wikipedia")
+         elif "open website" in cmd or any(cmd.startswith(f"open {s}") for s in ["youtube", "google", "wikipedia", "github", "gmail"]):
+             target_site = cmd.replace("open website", "").replace("open", "").strip()
+             self.speak_and_display(f"Accessing {target_site} in your default browser.")
+             self.actions.open_website(target_site)
+             self.assistant_state = "SUCCESS"
+             self.log_history("User", "Open Webpage", f"Target: {target_site}", "Success")
+
+         # Intent D: Create / Add a Task (e.g., "create a task complete study report")
+         elif "create a task" in cmd or "add task" in cmd or "remind me to" in cmd:
+             title, scheduled_time = self.task_manager.parse_task_from_text(cmd_text)
+             self.task_manager.add_task(title, scheduled_time)
+             self.assistant_state = "SUCCESS"
+             self.speak_and_display(f"Task successfully stored: '{title}' for {scheduled_time}.")
+             self.log_history("User", "Create Task", f"Task: {title} @ {scheduled_time}", "Success")
+
+         # Intent E: Read Tasks (e.g., "read my tasks", "view reminders", "check my schedule")
+         elif any(x in cmd for x in ["read my tasks", "view tasks", "get tasks", "show tasks", "check tasks"]):
+             tasks = self.task_manager.get_pending_tasks()
+             if not tasks:
+                 self.assistant_state = "SUCCESS"
+                 self.speak_and_display("Sir, your task list is currently completely empty.")
+                 self.log_history("User", "Get Tasks", "Request completed", "Success")
+             else:
+                 self.assistant_state = "SUCCESS"
+                 list_str = ", ".join([f"{t['title']} scheduled at {t['scheduled_time']}" for t in tasks])
+                 self.speak_and_display(f"You have {len(tasks)} pending tasks: {list_str}")
+                 self.log_history("User", "Get Tasks", f"Found {len(tasks)} tasks", "Success")
+
+         # Intent F: Email Fetching / Summarization (e.g., "check my email", "read mail")
+         elif any(x in cmd for x in ["check my email", "check email", "read mail", "check mail"]):
+             self.speak_and_display("Accessing secure mail servers...")
+             summaries = self.email_manager.fetch_unread_summaries()
+             if summaries and "configured" not in summaries[0]:
+                 self.assistant_state = "SUCCESS"
+                 mail_desc = f"You have {len(summaries)} new unread emails. Here is the latest: {summaries[0].split('Preview:')[0]}"
+                 self.speak_and_display(mail_desc)
+                 self.log_history("User", "Check Email", f"Fetched {len(summaries)} emails", "Success")
+             else:
+                 self.assistant_state = "ERROR"
+                 self.speak_and_display("Email credentials are not yet configured. Please use the Set Email credentials option.")
+                 self.log_history("User", "Check Email", "No credentials configured", "Failed")
+
+         # Intent G: Draft an email
+         elif "draft an email" in cmd or "send email" in cmd:
+             self.assistant_state = "SUCCESS"
+             self.speak_and_display("To draft an email, please use the manual control panel, or connect a safe SMTP server.")
+             self.log_history("User", "Draft Email", "SMTP integration prompt", "Success")
+
+         # Intent H: Tell time and date
+         elif "time" in cmd or "date" in cmd or "day" in cmd:
+             now = datetime.now().strftime("%I:%M %p on %A, %B %d")
+             self.assistant_state = "SUCCESS"
+             self.speak_and_display(f"Sir, it is currently {now}.")
+             self.log_history("User", "Get Time", f"Time returned: {now}", "Success")
+
+         # Default Fallback (Unrecognized)
+         else:
+             self.assistant_state = "ERROR"
+             fallback_text = f"I'm not sure how to handle '{cmd_text}'. For safety, I've blocked unapproved commands. You can say: 'Open
+ Chrome', 'Check my email', or 'Remind me to submit the report tomorrow at 4:30 PM'."
+             self.speak_and_display(fallback_text)
+             self.log_history("User", "Unrecognized", f"Raw: {cmd_text}", "Failed")
+
+         # Automatically return to IDLE after some seconds
+         self.after(3500, self.reset_to_idle)
+
+     def reset_to_idle(self):
+         if self.assistant_state not in ["LISTENING", "SPEAKING", "THINKING"]:
+             self.assistant_state = "IDLE"
+
+ if __name__ == "__main__":
+     app = FridayInterface()
+     app.mainloop()
+
+
+ The code looks good. The issue is that main.py creates a fresh EmailManager() instance that doesn't have access to the credentials set by the
+ config dialog. The email_manager.py reads credentials from environment variables, but main.py creates its own EmailManager instance without
+ passing credentials.
+
+ The fix is simple: modify main.py to read the credentials from environment variables directly and pass them to the EmailManager constructor.
+ Let me update main.py to do this.
+
+ The issue is that main.py creates a fresh EmailManager instance that doesn't inherit the credentials from the config dialog. The
+ email_manager.py reads credentials from environment variables, but main.py needs to pass them explicitly.
+
+ Let me fix main.py to read credentials from environment variables and pass them to EmailManager:
+
+
+ edit C:/Users/lanki/Desktop/FRIDAY_Assistant/main.py
+
+      ...
+   37
+   38         # Load Managers
+   39         self.actions = SystemActions()
+   40         self.task_manager = TaskManager()
+ + 41
+ + 42         # Read email credentials from environment variables
+ + 43         email_addr = os.environ.get("FRIDAY_EMAIL", "")
+ + 44         email_pass = os.environ.get("FRIDAY_PASSWORD", "")
+   41         self.email_manager = EmailManager()
+ + 46         if email_addr and email_pass:
+ + 47             self.email_manager.configure(email_addr, email_pass)
+ + 48         else:
+ + 49             self.email_manager.configure("", "")
+   42
+   43         # Voice Manager with safety callbacks
+   44         self.voice = VoiceManager(
+   45             callback=self.handle_voice_input,
+      ...
+
+
+ The edit was successful. Now let me verify the change was applied correctly and then test the email manager again.
+
+
+ read C:/Users/lanki/Desktop/FRIDAY_Assistant/main.py:60-89
+
+         self.actions.set_startup(True)
+
+         # Setup layout
+         self.setup_ui()
+
+         # Start animations
+         self.anim_frame = 0
+         self.particles = [{"x": random.randint(50, 450), "y": random.randint(50, 350), "speed": random.uniform(0.5, 1.5), "angle":
+ random.uniform(0, 2*math.pi), "radius": random.randint(1, 3)} for _ in range(30)]
+         self.animate()
+
+         # Say hello on startup securely
+         self.after(1000, lambda: self.speak_and_display("Hello sir. FRIDAY systems are fully operational. How can I assist you today?"))
+
+     def handle_voice_status(self, status, error_msg=None):
+         """Callback from VoiceManager when status changes."""
+         self.assistant_state = status
+         if status == "ERROR" and error_msg:
+             self.show_error(error_msg)
+         elif status == "LISTENING":
+             self.after(0, lambda: self.transcript_lbl.configure(text="Sensing audio..."))
+
+     def handle_voice_input(self, text):
+         """Processes finalized speech from VoiceManager."""
+         self.last_transcript = text
+         self.after(0, lambda: self.transcript_lbl.configure(text=f'"{text}"'))
+
+         # Parse commands
+         threading.Thread(target=self.parse_and_execute, args=(text,), daemon=True).start()
+
+     def speak_and_display(self, response_text):
+
+ [445 more lines in file. Use offset=90 to continue.]
